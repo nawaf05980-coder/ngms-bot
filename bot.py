@@ -1,10 +1,7 @@
 import os
 import logging
-import threading
 import requests
 from flask import Flask, request, jsonify
-from telegram.ext import Updater, CommandHandler
-from telegram import Update
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
@@ -12,6 +9,20 @@ PORT = int(os.getenv("PORT", 8080))
 user_chat_ids = {}
 logging.basicConfig(level=logging.INFO)
 flask_app = Flask(__name__)
+
+
+def send_message(chat_id, text):
+    requests.post(
+        "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage",
+        json={"chat_id": chat_id, "text": text}
+    )
+
+
+def send_document(chat_id, file_url, caption):
+    requests.post(
+        "https://api.telegram.org/bot" + BOT_TOKEN + "/sendDocument",
+        json={"chat_id": chat_id, "document": file_url, "caption": caption}
+    )
 
 
 @flask_app.route('/webhook/order', methods=['POST'])
@@ -32,26 +43,18 @@ def receive_order():
 
     message = (
         "تم تاكيد طلبك!\n\n"
-        "تفاصيل الطلب:\n"
         "رقم الطلب: " + str(order_id) + "\n"
         "المنتج: " + str(product_name) + "\n"
         "المبلغ: " + str(amount) + " " + str(currency) + "\n"
         "البريد: " + str(email) + "\n\n"
-        "كود التفعيل:\n"
-        + str(digital_code) + "\n\n"
+        "كود التفعيل:\n" + str(digital_code) + "\n\n"
         "شكرا لشرائك!"
     )
 
-    requests.post(
-        "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage",
-        json={"chat_id": chat_id, "text": message}
-    )
+    send_message(chat_id, message)
 
     if file_url:
-        requests.post(
-            "https://api.telegram.org/bot" + BOT_TOKEN + "/sendDocument",
-            json={"chat_id": chat_id, "document": file_url}
-        )
+        send_document(chat_id, file_url, "ملف طلبك #" + str(order_id))
 
     return jsonify({"status": "sent"}), 200
 
@@ -61,44 +64,54 @@ def home():
     return "Bot is running!", 200
 
 
-def start(update, context):
-    user = update.effective_user
-    username = (user.username or "").lower()
-    chat_id = update.effective_chat.id
-    if username:
-        user_chat_ids[username] = chat_id
-        update.message.reply_text(
-            "مرحبا " + user.first_name + "!\n"
-            "تم تسجيلك بنجاح\n"
-            "سيتم ارسال تفاصيل طلباتك هنا تلقائيا.\n"
-            "يوزرك: @" + username
+@flask_app.route('/telegram', methods=['POST'])
+def telegram_webhook():
+    data = request.json
+    if not data or 'message' not in data:
+        return 'ok'
+
+    message = data['message']
+    chat_id = message['chat']['id']
+    username = message.get('from', {}).get('username', '').lower()
+    text = message.get('text', '')
+    first_name = message.get('from', {}).get('first_name', '')
+
+    if text == '/start':
+        if username:
+            user_chat_ids[username] = chat_id
+            send_message(chat_id,
+                "مرحبا " + first_name + "!\n"
+                "تم تسجيلك بنجاح\n"
+                "سيتم ارسال تفاصيل طلباتك هنا تلقائيا.\n"
+                "يوزرك: @" + username
+            )
+        else:
+            send_message(chat_id,
+                "حسابك ما عنده يوزر.\n"
+                "اضف username من اعدادات تيليجرام ثم اكتب /start."
+            )
+    elif text == '/help':
+        send_message(chat_id,
+            "كيفية الاستخدام:\n"
+            "١. اكتب /start لتسجيل حسابك\n"
+            "٢. عند الطلب من المتجر ادخل يوزرك\n"
+            "٣. ستصلك تفاصيل الطلب هنا فور الدفع"
         )
-    else:
-        update.message.reply_text(
-            "حسابك ما عنده يوزر.\n"
-            "اضف username من اعدادات تيليجرام ثم اكتب /start."
+
+    return 'ok'
+
+
+def set_webhook():
+    domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+    if domain:
+        url = "https://" + domain + "/telegram"
+        requests.post(
+            "https://api.telegram.org/bot" + BOT_TOKEN + "/setWebhook",
+            json={"url": url}
         )
-
-
-def help_command(update, context):
-    update.message.reply_text(
-        "كيفية الاستخدام:\n"
-        "١. اكتب /start لتسجيل حسابك\n"
-        "٢. عند الطلب من المتجر ادخل يوزرك\n"
-        "٣. ستصلك تفاصيل الطلب هنا فور الدفع"
-    )
-
-
-def run_flask():
-    flask_app.run(host='0.0.0.0', port=PORT)
+        print("Webhook set: " + url)
 
 
 if __name__ == '__main__':
-    threading.Thread(target=run_flask, daemon=True).start()
-    updater = Updater(BOT_TOKEN)
-    dp = updater.dispatcher
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("help", help_command))
-    print("البوت شغال!")
-    updater.start_polling()
-    updater.idle()
+    set_webhook()
+    flask_app.run(host='0.0.0.0', port=PORT)
