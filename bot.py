@@ -39,42 +39,20 @@ def send_document(chat_id, file_url, caption):
 
 
 def extract_telegram_user(inner):
-    """يحاول يسحب اليوزر من كل الحقول الممكنة"""
+    # من items -> fields -> value (الحقل المخصص في المنتج)
+    items = inner.get('items', []) or []
+    for item in items:
+        fields = item.get('fields', []) or []
+        for field in fields:
+            value = str(field.get('value', '') or '').lstrip('@').strip().lower()
+            if value:
+                logging.info("Found user in items.fields: " + value)
+                return value
 
-    # 1. من customer_note
-    note = str(inner.get('customer_note', '') or '')
-    if note.strip():
-        return note.lstrip('@').strip().lower()
-
-    # 2. من customization (حقل مخصص في المتجر)
-    customization = inner.get('customization', '') or ''
-    if isinstance(customization, dict):
-        for key, val in customization.items():
-            val = str(val).lstrip('@').strip().lower()
-            if val:
-                return val
-    if isinstance(customization, str) and customization.strip():
-        return customization.lstrip('@').strip().lower()
-
-    # 3. من custom_fields
-    custom_fields = inner.get('custom_fields', []) or []
-    if isinstance(custom_fields, list):
-        for field in custom_fields:
-            val = str(field.get('value', '') or '').lstrip('@').strip().lower()
-            if val:
-                return val
-    if isinstance(custom_fields, dict):
-        for key, val in custom_fields.items():
-            val = str(val).lstrip('@').strip().lower()
-            if val:
-                return val
-
-    # 4. من meta
-    meta = inner.get('meta', {}) or {}
-    if isinstance(meta, dict):
-        for key, val in meta.items():
-            if 'telegram' in str(key).lower() or 'user' in str(key).lower():
-                return str(val).lstrip('@').strip().lower()
+    # من customer_note
+    note = str(inner.get('customer_note', '') or '').lstrip('@').strip().lower()
+    if note:
+        return note
 
     return ''
 
@@ -90,7 +68,6 @@ def receive_order():
     amount = str(inner.get('total', ''))
     currency = str(inner.get('currency', 'SAR'))
 
-    # استخراج اليوزر
     telegram_user = extract_telegram_user(inner)
     logging.info("Extracted telegram user: '" + telegram_user + "'")
 
@@ -99,10 +76,10 @@ def receive_order():
     email = str(customer.get('email', ''))
 
     # المنتجات
-    products = inner.get('products', []) or []
+    items = inner.get('items', []) or []
     product_names = []
-    for p in products:
-        name = p.get('name', '')
+    for item in items:
+        name = item.get('name', '')
         if name:
             product_names.append(str(name))
     product_name = ', '.join(product_names) if product_names else 'منتج'
