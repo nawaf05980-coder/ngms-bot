@@ -5,8 +5,10 @@ import requests
 from flask import Flask, request, jsonify
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+STORE_API_KEY = os.getenv("STORE_API_KEY")
 PORT = int(os.getenv("PORT", 8080))
 DATA_FILE = "users.json"
+STORE_API = "https://api.rzpos.com/api/v1"
 
 logging.basicConfig(level=logging.INFO)
 flask_app = Flask(__name__)
@@ -38,14 +40,75 @@ def send_document(chat_id, file_url, caption):
     )
 
 
+def get_order_cards(order_id):
+    """يجيب البطاقات الرقمية من API المتجر"""
+    try:
+        headers = {
+            "Authorization": "Bearer " + STORE_API_KEY,
+            "Accept": "application/json"
+        }
+        url = STORE_API + "/orders/" + str(order_id)
+        resp = requests.get(url, headers=headers, timeout=10)
+        logging.info("Store API response: " + str(resp.status_code) + " " + resp.text[:500])
+
+        if resp.status_code == 200:
+            data = resp.json()
+            order = data.get('data', data)
+
+            # البطاقات الرقمية
+            serials = order.get('serial_numbers', []) or []
+            if serials:
+                return serials
+
+            cards = order.get('cards', []) or []
+            if cards:
+                return cards
+
+            digital_codes = order.get('digital_codes', []) or []
+            if digital_codes:
+                return digital_codes
+
+            # من items
+            items = order.get('items', []) or []
+            for item in items:
+                serials = item.get('serial_numbers', []) or []
+                if serials:
+                    return serials
+                codes = item.get('digital_codes', []) or []
+                if codes:
+                    return codes
+
+    except Exception as e:
+        logging.error("Error fetching order: " + str(e))
+    return []
+
+
+def format_card(card):
+    """يحول البطاقة لنص"""
+    if isinstance(card, str):
+        return card
+    if isinstance(card, dict):
+        email = card.get('email', '') or card.get('username', '') or ''
+        password = card.get('password', '') or card.get('code', '') or ''
+        if email and password:
+            return "الايميل: " + email + "\nالباسورد: " + password
+        elif email:
+            return email
+        elif password:
+            return password
+        else:
+            return str(card)
+    return str(card)
+
+
 @flask_app.route('/webhook/order', methods=['POST'])
 def receive_order():
     data = request.json
-    logging.info("Order received: " + str(data))
+    logging.info("Order received: " + str(data)[:200])
 
     inner = data.get('data', data)
 
-    order_id = str(inner.get('id', 'غير محدد'))
+    order_id = str(inner.get('id', ''))
     amount = str(inner.get('total', '0.00'))
     currency = str(inner.get('currency', 'SAR'))
 
@@ -74,42 +137,6 @@ def receive_order():
     customer = inner.get('customer', {}) or {}
     email = str(customer.get('email', ''))
 
-    # البطاقة الرقمية - إيميل وباسورد
-    card_email = ''
-    card_password = ''
-
-    # من serial_numbers
-    serials = inner.get('serial_numbers', []) or []
-    if serials:
-        serial = serials[0]
-        if isinstance(serial, dict):
-            card_email = str(serial.get('email', '') or serial.get('username', '') or '')
-            card_password = str(serial.get('password', '') or serial.get('code', '') or '')
-        else:
-            card_email = str(serial)
-
-    # من digital_codes
-    if not card_email:
-        codes = inner.get('digital_codes', []) or []
-        if codes:
-            code = codes[0]
-            if isinstance(code, dict):
-                card_email = str(code.get('email', '') or code.get('username', '') or '')
-                card_password = str(code.get('password', '') or code.get('code', '') or '')
-            else:
-                card_email = str(code)
-
-    # من cards
-    if not card_email:
-        cards = inner.get('cards', []) or []
-        if cards:
-            card = cards[0]
-            if isinstance(card, dict):
-                card_email = str(card.get('email', '') or card.get('username', '') or '')
-                card_password = str(card.get('password', '') or card.get('code', '') or '')
-
-    file_url = str(inner.get('file_url', '') or '')
-
     if not telegram_user:
         logging.warning("No telegram user found")
         return jsonify({"status": "no_telegram_user"}), 400
@@ -121,14 +148,14 @@ def receive_order():
         logging.warning("User not found: " + telegram_user)
         return jsonify({"status": "user_not_found", "user": telegram_user}), 404
 
-    # بناء الرسالة
-    delivery = ''
-    if card_email and card_password:
-        delivery = "الإيميل: " + card_email + "\nالباسورد: " + card_password
-    elif card_email:
-        delivery = "الكود: " + card_email
+    # جيب البطاقة من API المتجر
+    cards = get_order_cards(order_id)
+    logging.info("Cards found: " + str(cards))
+
+    if cards:
+        card_text = format_card(cards[0])
     else:
-        delivery = 'سيتم التواصل معك قريباً'
+        card_text = 'سيتم التواصل معك قريباً'
 
     message = (
         "✅ تم تاكيد طلبك!\n\n"
@@ -137,15 +164,12 @@ def receive_order():
         "المبلغ: " + amount + " " + currency + "\n\n"
         "━━━━━━━━━━━━━\n"
         "بيانات التسليم:\n"
-        + delivery + "\n"
+        + card_text + "\n"
         "━━━━━━━━━━━━━\n\n"
         "شكرا لشرائك! 🎉"
     )
 
     send_message(chat_id, message)
-
-    if file_url:
-        send_document(chat_id, file_url, "ملف طلبك #" + order_id)
 
     return jsonify({"status": "sent"}), 200
 
