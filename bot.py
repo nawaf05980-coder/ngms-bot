@@ -1,14 +1,27 @@
 import os
+import json
 import logging
 import requests
 from flask import Flask, request, jsonify
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 8080))
+DATA_FILE = "users.json"
 
-user_chat_ids = {}
 logging.basicConfig(level=logging.INFO)
 flask_app = Flask(__name__)
+
+
+def load_users():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+
+def save_users(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
 
 
 def send_message(chat_id, text):
@@ -28,6 +41,8 @@ def send_document(chat_id, file_url, caption):
 @flask_app.route('/webhook/order', methods=['POST'])
 def receive_order():
     data = request.json
+    logging.info("Order received: " + str(data))
+
     telegram_user = data.get('telegram_username', '').lstrip('@').lower()
     order_id = data.get('order_id', 'غير محدد')
     email = data.get('customer_email', '')
@@ -37,9 +52,13 @@ def receive_order():
     amount = data.get('amount', '')
     currency = data.get('currency', 'SAR')
 
-    chat_id = user_chat_ids.get(telegram_user)
+    users = load_users()
+    chat_id = users.get(telegram_user)
+
     if not chat_id:
-        return jsonify({"status": "user_not_found"}), 404
+        logging.warning("User not found: " + telegram_user)
+        logging.warning("Known users: " + str(list(users.keys())))
+        return jsonify({"status": "user_not_found", "user": telegram_user}), 404
 
     message = (
         "تم تاكيد طلبك!\n\n"
@@ -61,7 +80,8 @@ def receive_order():
 
 @flask_app.route('/', methods=['GET'])
 def home():
-    return "Bot is running!", 200
+    users = load_users()
+    return "Bot is running! Users: " + str(len(users)), 200
 
 
 @flask_app.route('/telegram', methods=['POST'])
@@ -78,7 +98,9 @@ def telegram_webhook():
 
     if text == '/start':
         if username:
-            user_chat_ids[username] = chat_id
+            users = load_users()
+            users[username] = chat_id
+            save_users(users)
             send_message(chat_id,
                 "مرحبا " + first_name + "!\n"
                 "تم تسجيلك بنجاح\n"
