@@ -38,25 +38,6 @@ def send_document(chat_id, file_url, caption):
     )
 
 
-def extract_telegram_user(inner):
-    # من items -> fields -> value (الحقل المخصص في المنتج)
-    items = inner.get('items', []) or []
-    for item in items:
-        fields = item.get('fields', []) or []
-        for field in fields:
-            value = str(field.get('value', '') or '').lstrip('@').strip().lower()
-            if value:
-                logging.info("Found user in items.fields: " + value)
-                return value
-
-    # من customer_note
-    note = str(inner.get('customer_note', '') or '').lstrip('@').strip().lower()
-    if note:
-        return note
-
-    return ''
-
-
 @flask_app.route('/webhook/order', methods=['POST'])
 def receive_order():
     data = request.json
@@ -65,41 +46,72 @@ def receive_order():
     inner = data.get('data', data)
 
     order_id = str(inner.get('id', 'غير محدد'))
-    amount = str(inner.get('total', ''))
+    amount = str(inner.get('total', '0.00'))
     currency = str(inner.get('currency', 'SAR'))
 
-    telegram_user = extract_telegram_user(inner)
-    logging.info("Extracted telegram user: '" + telegram_user + "'")
+    # اليوزر من items -> fields
+    telegram_user = ''
+    items = inner.get('items', []) or []
+    for item in items:
+        fields = item.get('fields', []) or []
+        for field in fields:
+            value = str(field.get('value', '') or '').lstrip('@').strip().lower()
+            if value:
+                telegram_user = value
+                break
+
+    logging.info("Telegram user: '" + telegram_user + "'")
+
+    # اسم المنتج
+    product_names = []
+    for item in items:
+        name = (item.get('item') or {}).get('name', '') or item.get('name', '')
+        if name:
+            product_names.append(str(name))
+    product_name = ', '.join(product_names) if product_names else 'منتج'
 
     # بيانات العميل
     customer = inner.get('customer', {}) or {}
     email = str(customer.get('email', ''))
 
-    # المنتجات
-    items = inner.get('items', []) or []
-    product_names = []
-    for item in items:
-        name = item.get('name', '')
-        if name:
-            product_names.append(str(name))
-    product_name = ', '.join(product_names) if product_names else 'منتج'
+    # البطاقة الرقمية - إيميل وباسورد
+    card_email = ''
+    card_password = ''
 
-    # كود التفعيل
-    digital_code = ''
+    # من serial_numbers
     serials = inner.get('serial_numbers', []) or []
     if serials:
-        digital_code = str(serials[0])
-    if not digital_code:
+        serial = serials[0]
+        if isinstance(serial, dict):
+            card_email = str(serial.get('email', '') or serial.get('username', '') or '')
+            card_password = str(serial.get('password', '') or serial.get('code', '') or '')
+        else:
+            card_email = str(serial)
+
+    # من digital_codes
+    if not card_email:
         codes = inner.get('digital_codes', []) or []
         if codes:
-            digital_code = str(codes[0])
-    if not digital_code:
-        digital_code = 'سيتم الارسال قريبا'
+            code = codes[0]
+            if isinstance(code, dict):
+                card_email = str(code.get('email', '') or code.get('username', '') or '')
+                card_password = str(code.get('password', '') or code.get('code', '') or '')
+            else:
+                card_email = str(code)
+
+    # من cards
+    if not card_email:
+        cards = inner.get('cards', []) or []
+        if cards:
+            card = cards[0]
+            if isinstance(card, dict):
+                card_email = str(card.get('email', '') or card.get('username', '') or '')
+                card_password = str(card.get('password', '') or card.get('code', '') or '')
 
     file_url = str(inner.get('file_url', '') or '')
 
     if not telegram_user:
-        logging.warning("No telegram user found in order data")
+        logging.warning("No telegram user found")
         return jsonify({"status": "no_telegram_user"}), 400
 
     users = load_users()
@@ -107,17 +119,27 @@ def receive_order():
 
     if not chat_id:
         logging.warning("User not found: " + telegram_user)
-        logging.warning("Known users: " + str(list(users.keys())))
         return jsonify({"status": "user_not_found", "user": telegram_user}), 404
 
+    # بناء الرسالة
+    delivery = ''
+    if card_email and card_password:
+        delivery = "الإيميل: " + card_email + "\nالباسورد: " + card_password
+    elif card_email:
+        delivery = "الكود: " + card_email
+    else:
+        delivery = 'سيتم التواصل معك قريباً'
+
     message = (
-        "تم تاكيد طلبك!\n\n"
+        "✅ تم تاكيد طلبك!\n\n"
         "رقم الطلب: " + order_id + "\n"
         "المنتج: " + product_name + "\n"
-        "المبلغ: " + amount + " " + currency + "\n"
-        "البريد: " + email + "\n\n"
-        "كود التفعيل:\n" + digital_code + "\n\n"
-        "شكرا لشرائك!"
+        "المبلغ: " + amount + " " + currency + "\n\n"
+        "━━━━━━━━━━━━━\n"
+        "بيانات التسليم:\n"
+        + delivery + "\n"
+        "━━━━━━━━━━━━━\n\n"
+        "شكرا لشرائك! 🎉"
     )
 
     send_message(chat_id, message)
@@ -153,7 +175,7 @@ def telegram_webhook():
             save_users(users)
             send_message(chat_id,
                 "مرحبا " + first_name + "!\n"
-                "تم تسجيلك بنجاح\n"
+                "تم تسجيلك بنجاح ✅\n"
                 "سيتم ارسال تفاصيل طلباتك هنا تلقائيا.\n"
                 "يوزرك: @" + username
             )
