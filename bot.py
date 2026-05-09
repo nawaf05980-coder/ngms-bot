@@ -7,7 +7,7 @@ from flask import Flask, request, jsonify
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("8770116377:AAE5PjXbZUuNnBe39NgUSYYpi40xV3Pm7n0")
 WEBHOOK_PORT = int(os.getenv("PORT", 5000))
 
 user_chat_ids = {}
