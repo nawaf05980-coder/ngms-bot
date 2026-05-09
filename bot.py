@@ -1,5 +1,4 @@
 import os
-import json
 import logging
 import threading
 import requests
@@ -8,7 +7,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_PORT = int(os.getenv("PORT", 5000))
+WEBHOOK_PORT = int(os.getenv("PORT", 8080))
 
 user_chat_ids = {}
 logging.basicConfig(level=logging.INFO)
@@ -77,22 +76,4 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "أضف username من إعدادات تيليجرام ثم اكتب /start مجدداً."
         )
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📌 *كيفية الاستخدام:*\n\n"
-        "١. اكتب /start لتسجيل حسابك\n"
-        "٢. عند الطلب من المتجر أدخل يوزرك\n"
-        "٣. ستصلك تفاصيل الطلب هنا فور الدفع",
-        parse_mode="Markdown"
-    )
-
-def run_flask():
-    flask_app.run(host='0.0.0.0', port=WEBHOOK_PORT)
-
-if __name__ == '__main__':
-    threading.Thread(target=run_flask, daemon=True).start()
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    print("🤖 البوت شغال!")
-    app.run_polling()
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE
