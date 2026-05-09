@@ -8,7 +8,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 STORE_API_KEY = os.getenv("STORE_API_KEY")
 PORT = int(os.getenv("PORT", 8080))
 DATA_FILE = "users.json"
-STORE_API = "https://api.rzpos.com/api/v1"
+STORE_API = "https://merchant-api.rmz.gg/shawarma"
 
 logging.basicConfig(level=logging.INFO)
 flask_app = Flask(__name__)
@@ -41,7 +41,6 @@ def send_document(chat_id, file_url, caption):
 
 
 def get_order_cards(order_id):
-    """يجيب البطاقات الرقمية من API المتجر"""
     try:
         headers = {
             "Authorization": "Bearer " + STORE_API_KEY,
@@ -49,13 +48,13 @@ def get_order_cards(order_id):
         }
         url = STORE_API + "/orders/" + str(order_id)
         resp = requests.get(url, headers=headers, timeout=10)
-        logging.info("Store API response: " + str(resp.status_code) + " " + resp.text[:500])
+        logging.info("Store API status: " + str(resp.status_code))
+        logging.info("Store API response: " + resp.text[:1000])
 
         if resp.status_code == 200:
             data = resp.json()
             order = data.get('data', data)
 
-            # البطاقات الرقمية
             serials = order.get('serial_numbers', []) or []
             if serials:
                 return serials
@@ -68,7 +67,6 @@ def get_order_cards(order_id):
             if digital_codes:
                 return digital_codes
 
-            # من items
             items = order.get('items', []) or []
             for item in items:
                 serials = item.get('serial_numbers', []) or []
@@ -84,27 +82,26 @@ def get_order_cards(order_id):
 
 
 def format_card(card):
-    """يحول البطاقة لنص"""
     if isinstance(card, str):
         return card
     if isinstance(card, dict):
         email = card.get('email', '') or card.get('username', '') or ''
         password = card.get('password', '') or card.get('code', '') or ''
         if email and password:
-            return "الايميل: " + email + "\nالباسورد: " + password
+            return "الايميل: " + str(email) + "\nالباسورد: " + str(password)
         elif email:
-            return email
+            return str(email)
         elif password:
-            return password
+            return str(password)
         else:
-            return str(card)
+            return ' | '.join([str(v) for v in card.values() if v])
     return str(card)
 
 
 @flask_app.route('/webhook/order', methods=['POST'])
 def receive_order():
     data = request.json
-    logging.info("Order received: " + str(data)[:200])
+    logging.info("Order received ID: " + str(data.get('data', {}).get('id', '')))
 
     inner = data.get('data', data)
 
@@ -132,10 +129,6 @@ def receive_order():
         if name:
             product_names.append(str(name))
     product_name = ', '.join(product_names) if product_names else 'منتج'
-
-    # بيانات العميل
-    customer = inner.get('customer', {}) or {}
-    email = str(customer.get('email', ''))
 
     if not telegram_user:
         logging.warning("No telegram user found")
